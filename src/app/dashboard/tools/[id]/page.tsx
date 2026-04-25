@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { CopyButton } from '@/components/CopyButton';
 import { DeleteToolButton } from './DeleteToolButton';
+import { RegenerateKeyButton } from './RegenerateKeyButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,18 +30,30 @@ export default async function ToolDetailPage({ params }: { params: { id: string 
     .order('created_at', { ascending: false })
     .limit(20);
 
+  const { data: keyRow } = await supabase
+    .from('tool_api_keys')
+    .select('key_prefix, created_at')
+    .eq('tool_id', tool.id)
+    .maybeSingle();
+
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
   const proxyUrl = `${appUrl}/api/run/${tool.slug}`;
   const publicUrl = `${appUrl}/tool/${tool.slug}`;
 
+  const exampleBody = JSON.stringify(
+    tool.input_schema && typeof tool.input_schema === 'object'
+      ? exampleFromSchema(tool.input_schema)
+      : { hello: 'world' }
+  );
+
+  const keyHeaderLine = tool.is_public
+    ? ''
+    : ` \\\n  -H 'x-toolrelay-key: YOUR_KEY'`;
+
   const curlExample =
     tool.method === 'GET'
-      ? `curl '${proxyUrl}'`
-      : `curl -X POST '${proxyUrl}' \\\n  -H 'content-type: application/json' \\\n  -d '${JSON.stringify(
-          tool.input_schema && typeof tool.input_schema === 'object'
-            ? exampleFromSchema(tool.input_schema)
-            : { hello: 'world' }
-        )}'`;
+      ? `curl '${proxyUrl}'${keyHeaderLine}`
+      : `curl -X POST '${proxyUrl}'${keyHeaderLine} \\\n  -H 'content-type: application/json' \\\n  -d '${exampleBody}'`;
 
   return (
     <div className="space-y-8 max-w-4xl">
@@ -89,6 +102,45 @@ export default async function ToolDetailPage({ params }: { params: { id: string 
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="card p-6 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="font-semibold">API key</h2>
+            <p className="text-sm text-slate-600 mt-1">
+              {tool.is_public
+                ? 'Public tools are open by default — no API key required. Mark a tool private to enforce this key on every call.'
+                : `Required on every call as the ${'`x-toolrelay-key`'} header.`}
+            </p>
+          </div>
+        </div>
+        {keyRow ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-slate-500">Prefix</div>
+                <div className="font-mono text-sm">
+                  {keyRow.key_prefix}
+                  <span className="text-slate-400">••••••••••••••••••••</span>
+                </div>
+              </div>
+              <div className="text-xs text-slate-500">
+                Created {new Date(keyRow.created_at).toLocaleString()}
+              </div>
+            </div>
+            <p className="help mt-2">
+              The full key was shown only at generation time. Regenerate to get a new one — the
+              previous key stops working immediately.
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-600">
+            No API key on file yet. Generate one — required for private tools, optional but
+            recommended for public tools.
+          </p>
+        )}
+        <RegenerateKeyButton toolId={tool.id} hasKey={!!keyRow} />
       </section>
 
       <section className="card p-6 space-y-3">

@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { getUserUsageContext } from '@/lib/usage';
 import { isValidSlug, validateEndpointUrl } from '@/lib/validate-url';
+import { generateApiKey } from '@/lib/api-keys';
 
 const ToolInput = z.object({
   name: z.string().trim().min(1).max(120),
@@ -91,7 +93,7 @@ export async function POST(request: NextRequest) {
       output_example: input.output_example ?? null,
       is_public: input.is_public,
     })
-    .select('id, slug')
+    .select('id, slug, is_public')
     .single();
 
   if (error) {
@@ -101,5 +103,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ tool });
+  // Generate an API key for every new tool. Public tools don't enforce it,
+  // but having one ready means flipping a tool to private later just works.
+  // The plaintext key is returned exactly once here.
+  const generated = generateApiKey();
+  const admin = createAdminClient();
+  const { error: keyErr } = await admin.from('tool_api_keys').upsert(
+    {
+      tool_id: tool.id,
+      key_prefix: generated.prefix,
+      key_hash: generated.hash,
+    },
+    { onConflict: 'tool_id' }
+  );
+  if (keyErr) {
+    // Tool was created; surface the key error but don't roll back. The owner
+    // can regenerate from the dashboard.
+    return NextResponse.json(
+      {
+        tool,
+        api_key: null,
+        warning: `Tool created, but API key generation failed: ${keyErr.message}. You can regenerate from the tool detail page.`,
+      },
+      { status: 201 }
+    );
+  }
+
+  return NextResponse.json(
+    { tool, api_key: generated.fullKey, key_prefix: generated.prefix },
+    { status: 201 }
+  );
 }

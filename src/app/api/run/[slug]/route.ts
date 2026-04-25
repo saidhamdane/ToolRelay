@@ -3,6 +3,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getUserUsageContext } from '@/lib/usage';
 import { validateEndpointUrl } from '@/lib/validate-url';
+import { hashApiKey } from '@/lib/api-keys';
+
+const API_KEY_HEADER = 'x-toolrelay-key';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -93,7 +96,47 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
   const upstreamUrl = urlCheck.url;
   const upstreamHost = upstreamUrl.host;
 
-  // 4. Plan/usage gate. If the usage lookup itself fails, log and continue —
+  // 4. Private tools: require a matching x-toolrelay-key header. Public tools
+  // are open. Failed auth is logged to usage_logs as a 401 so owners can see
+  // unauthorized attempts in the dashboard.
+  if (!tool.is_public) {
+    const presented = request.headers.get(API_KEY_HEADER) ?? '';
+    if (!presented) {
+      await logRun(admin, tool.id, tool.user_id, 401, 0, 'unauthorized_missing_key');
+      return errorJson(401, {
+        error: 'unauthorized',
+        message: `Missing required ${API_KEY_HEADER} header for this private tool`,
+      });
+    }
+
+    const presentedHash = hashApiKey(presented);
+
+    const { data: keyRow, error: keyErr } = await admin
+      .from('tool_api_keys')
+      .select('tool_id')
+      .eq('tool_id', tool.id)
+      .eq('key_hash', presentedHash)
+      .maybeSingle();
+
+    if (keyErr) {
+      console.error('[run] api key lookup error:', keyErr.message);
+      return errorJson(500, {
+        error: 'auth_lookup_failed',
+        message: 'Could not validate API key',
+        details: keyErr.message,
+      });
+    }
+
+    if (!keyRow) {
+      await logRun(admin, tool.id, tool.user_id, 401, 0, 'unauthorized_invalid_key');
+      return errorJson(401, {
+        error: 'unauthorized',
+        message: 'Invalid API key for this tool',
+      });
+    }
+  }
+
+  // 5. Plan/usage gate. If the usage lookup itself fails, log and continue —
   // never block legitimate runs because the metering query had a hiccup.
   try {
     const usage = await getUserUsageContext(tool.user_id);
@@ -249,7 +292,7 @@ export async function OPTIONS() {
     headers: {
       'access-control-allow-origin': '*',
       'access-control-allow-methods': 'GET, POST, OPTIONS',
-      'access-control-allow-headers': 'content-type, authorization',
+      'access-control-allow-headers': 'content-type, authorization, x-toolrelay-key',
       'access-control-max-age': '86400',
     },
   });

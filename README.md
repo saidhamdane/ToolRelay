@@ -87,13 +87,60 @@ stripe listen --forward-to http://localhost:3000/api/stripe/webhook
 
 ### API
 
-- `POST /api/tools` — create a tool (auth required, plan limits enforced)
+- `POST /api/tools` — create a tool (auth required, plan limits enforced); the
+  response includes the freshly-generated API key once
+- `POST /api/tools/[id]/key` — regenerate the API key for a tool you own; the
+  response includes the new plaintext key once
 - `DELETE /api/tools/[id]` — delete a tool you own
 - `GET /api/run/[slug]` & `POST /api/run/[slug]` — proxy that forwards to the
-  configured endpoint, enforces monthly run caps, and logs each call
+  configured endpoint, enforces monthly run caps, requires an
+  `x-toolrelay-key` header for private tools, and logs each call
 - `POST /api/stripe/checkout` — start a Pro upgrade Checkout session
 - `POST /api/stripe/webhook` — Stripe webhook (subscription state sync)
 - `GET /api/auth/callback` — email-confirm / OAuth callback
+
+## Per-tool API keys
+
+Every tool gets an API key on creation. The plaintext value is returned **once**
+(in the create-tool response and shown on the form's success screen) and never
+displayed again — only the prefix and creation timestamp are stored on disk.
+The full key is hashed with SHA-256 before being persisted.
+
+- **Public tools** are open by default and ignore the key — anyone with the
+  slug can call the proxy.
+- **Private tools** require the key on every request as the
+  `x-toolrelay-key` header. Missing or invalid keys return a 401 and are
+  recorded in `usage_logs` with `status_code: 401` and either
+  `unauthorized_missing_key` or `unauthorized_invalid_key` in `error_message`.
+
+You can regenerate a key from the tool detail page. Regeneration immediately
+invalidates the previous key.
+
+### Example calls
+
+Public tool — no key needed:
+
+```bash
+curl -X POST "$NEXT_PUBLIC_APP_URL/api/run/public-tool" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello"}'
+```
+
+Private tool — key required:
+
+```bash
+curl -X POST "$NEXT_PUBLIC_APP_URL/api/run/private-tool" \
+  -H "Content-Type: application/json" \
+  -H "x-toolrelay-key: trk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  -d '{"message":"hello"}'
+```
+
+GET-method tools work the same way — just attach the header:
+
+```bash
+curl "$NEXT_PUBLIC_APP_URL/api/run/private-get-tool" \
+  -H "x-toolrelay-key: trk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
 
 ## Plan limits
 
@@ -140,6 +187,8 @@ Possible `error` codes and what they mean:
 | `tool_lookup_failed` | 500 | DB lookup failed (RLS / network / migrations not applied) | Check Supabase status; re-run `supabase/migrations/0001_init.sql` |
 | `tool_not_found` | 404 | No `tools` row matches the slug | Verify the slug in the dashboard |
 | `invalid_endpoint` | 500 | Saved `endpoint_url` was rejected by the SSRF guard (localhost, private IP, non-http(s)) | Edit the tool to use a public https URL |
+| `unauthorized` | 401 | Private tool was called without an `x-toolrelay-key` header, or with one that doesn't match | Send the current key; regenerate from the tool detail page if lost |
+| `auth_lookup_failed` | 500 | Could not query `tool_api_keys` (RLS / missing migration) | Apply `0002_tool_api_keys.sql` and check service-role permissions |
 | `plan_limit_exceeded` | 429 | Owner is past their monthly run cap | Upgrade plan or wait for the reset |
 | `upstream_fetch_failed` | 502 | Network / DNS / TLS error or non-HTTP response from upstream | See `details` for the underlying code (`ENOTFOUND`, `ECONNRESET`, `CERT_HAS_EXPIRED`, …) |
 | `upstream_timeout` *(in `details`)* | 502 | Upstream took longer than 25s | Speed up the upstream or shorten its work |

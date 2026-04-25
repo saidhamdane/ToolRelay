@@ -1,12 +1,20 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { slugify } from '@/lib/validate-url';
 import type { PlanLimits } from '@/lib/plans';
+import { ApiKeyReveal } from '@/components/ApiKeyReveal';
+
+interface CreatedToolReveal {
+  toolId: string;
+  toolName: string;
+  isPublic: boolean;
+  apiKey: string | null;
+  warning?: string | null;
+}
 
 export function NewToolForm({ plan }: { plan: PlanLimits }) {
-  const router = useRouter();
   const [form, setForm] = useState({
     name: '',
     slug: '',
@@ -21,6 +29,7 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<CreatedToolReveal | null>(null);
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -76,8 +85,46 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
       setLoading(false);
       return;
     }
-    router.push(`/dashboard/tools/${data.tool.id}`);
-    router.refresh();
+    setCreated({
+      toolId: data.tool.id,
+      toolName: form.name,
+      isPublic: data.tool.is_public,
+      apiKey: data.api_key ?? null,
+      warning: data.warning ?? null,
+    });
+    setLoading(false);
+  }
+
+  if (created) {
+    return (
+      <div className="mt-8 card p-6 space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold">"{created.toolName}" created</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            {created.isPublic
+              ? 'Public tools are open by default — no API key required to call them.'
+              : 'Private tools require this API key on every call.'}
+          </p>
+        </div>
+
+        {created.apiKey ? (
+          <ApiKeyReveal apiKey={created.apiKey} />
+        ) : created.warning ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            {created.warning}
+          </div>
+        ) : null}
+
+        <div className="flex gap-3">
+          <Link href={`/dashboard/tools/${created.toolId}`} className="btn-primary">
+            Continue to tool
+          </Link>
+          <Link href="/dashboard" className="btn-secondary">
+            Back to dashboard
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   const customHeaderDisabled = !plan.allowsCustomAuthHeaders;
