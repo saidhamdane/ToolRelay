@@ -119,6 +119,61 @@ Limits are enforced server-side at create time and at every proxy call.
 - Run cap is checked before each proxy call; over-quota requests are rejected
   with `429`.
 
+## Troubleshooting `/api/run/[slug]`
+
+The proxy returns structured JSON for every error, with the shape:
+
+```json
+{
+  "error": "upstream_fetch_failed",
+  "message": "Could not reach the upstream API",
+  "upstream_host": "httpbin.org",
+  "details": "ENOTFOUND: getaddrinfo ENOTFOUND ..."
+}
+```
+
+Possible `error` codes and what they mean:
+
+| `error` | HTTP | Meaning | Fix |
+| --- | --- | --- | --- |
+| `server_misconfigured` | 500 | `SUPABASE_SERVICE_ROLE_KEY` or `NEXT_PUBLIC_SUPABASE_URL` is missing in the deployment env | Set both vars on Vercel and redeploy |
+| `tool_lookup_failed` | 500 | DB lookup failed (RLS / network / migrations not applied) | Check Supabase status; re-run `supabase/migrations/0001_init.sql` |
+| `tool_not_found` | 404 | No `tools` row matches the slug | Verify the slug in the dashboard |
+| `invalid_endpoint` | 500 | Saved `endpoint_url` was rejected by the SSRF guard (localhost, private IP, non-http(s)) | Edit the tool to use a public https URL |
+| `plan_limit_exceeded` | 429 | Owner is past their monthly run cap | Upgrade plan or wait for the reset |
+| `upstream_fetch_failed` | 502 | Network / DNS / TLS error or non-HTTP response from upstream | See `details` for the underlying code (`ENOTFOUND`, `ECONNRESET`, `CERT_HAS_EXPIRED`, …) |
+| `upstream_timeout` *(in `details`)* | 502 | Upstream took longer than 25s | Speed up the upstream or shorten its work |
+| `internal_error` | 500 | Last-resort guard caught an unexpected throw — see `details` and Vercel logs | Open the Vercel function logs for the stack trace |
+
+### Quick smoke test
+
+After deploying, create a tool that proxies `https://httpbin.org/post`
+(method `POST`, no auth header, public) and run:
+
+```bash
+curl -i -X POST "$NEXT_PUBLIC_APP_URL/api/run/<slug>" \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"hello from ToolRelay"}'
+```
+
+Expected: `HTTP/2 200`, JSON response from httpbin echoing the body, and a
+new row in `usage_logs` for that tool.
+
+### Common fixes
+
+- **All proxy calls 500 with no body** → `SUPABASE_SERVICE_ROLE_KEY` is not set
+  in Vercel. Set it under Project Settings → Environment Variables, then redeploy.
+- **`upstream_fetch_failed` with `ENOTFOUND`** → DNS issue or typo in the
+  endpoint URL. Resolve the host locally and verify it's reachable.
+- **`upstream_fetch_failed` with `CERT_HAS_EXPIRED`** → Upstream's TLS cert is
+  invalid; ToolRelay does not bypass cert validation.
+- **`upstream_fetch_failed` with no `details`** and short latency → Upstream
+  closed the connection. Confirm it accepts the configured method (`GET` vs
+  `POST`) and Content-Type.
+
+The proxy's `upstream_host` field intentionally returns only the host (no
+path) and `auth_header_value` is never logged or echoed back to clients.
+
 ## Deploy
 
 The app is ready for Vercel. Set all env vars in the Vercel project, point

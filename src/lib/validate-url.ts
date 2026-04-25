@@ -41,9 +41,16 @@ export function validateEndpointUrl(raw: string): { ok: true; url: URL } | { ok:
     }
   }
 
-  // IPv6 link-local / loopback / ULA
-  if (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80')) {
-    return { ok: false, error: 'Private IPv6 ranges are not allowed' };
+  // IPv6 link-local / loopback / ULA — only flag if the host is actually an
+  // IPv6 literal (URL.hostname strips brackets, so it contains a colon).
+  if (host.includes(':')) {
+    if (
+      host.startsWith('fc') ||
+      host.startsWith('fd') ||
+      host.startsWith('fe80')
+    ) {
+      return { ok: false, error: 'Private IPv6 ranges are not allowed' };
+    }
   }
 
   return { ok: true, url };
