@@ -8,6 +8,7 @@ import { hashApiKey } from '@/lib/api-keys';
 const API_KEY_HEADER = 'x-toolrelay-key';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
@@ -36,7 +37,11 @@ function errorJson(status: number, body: ProxyError) {
 }
 
 async function handle(request: NextRequest, slug: string): Promise<NextResponse> {
-  // 1. Service-role client — fail loudly with structured JSON if env is wrong.
+  // Top-of-handler trace. If this line isn't in Vercel logs, the new bundle
+  // isn't being served — redeploy or clear the function cache.
+  console.log('[run] handler entered', { slug, method: request.method });
+
+  // 1. Service-role client.
   let admin: SupabaseClient;
   try {
     admin = createAdminClient();
@@ -84,43 +89,40 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
     });
   }
 
-  // 3. Validate the configured endpoint (SSRF guard, http(s) only).
-  const urlCheck = validateEndpointUrl(tool.endpoint_url);
-  if (!urlCheck.ok) {
-    return errorJson(500, {
-      error: 'invalid_endpoint',
-      message: 'The configured endpoint URL is not allowed',
-      details: urlCheck.error,
-    });
-  }
-  const upstreamUrl = urlCheck.url;
-  const upstreamHost = upstreamUrl.host;
-
-  // 4. Private tools: require a matching x-toolrelay-key header. Public tools
-  // are open. Failed auth is logged to usage_logs as a 401 so owners can see
-  // unauthorized attempts in the dashboard.
+  // ===========================================================================
+  // HARD AUTH GUARD — runs immediately after the tool lookup, BEFORE the
+  // URL validator, the plan/usage gate, and any upstream side effect.
   //
-  // Defensive: treat ANY value other than the literal boolean `true` as
-  // private. Better to reject a misconfigured tool than to leak one.
-  const isPrivate = tool.is_public !== true;
-  console.log('[run] auth gate', {
-    slug: tool.slug,
-    is_public: tool.is_public,
-    is_public_type: typeof tool.is_public,
-    isPrivate,
-  });
+  // A tool is considered public ONLY if `is_public` is the literal boolean
+  // `true`. Any other value (false, null, undefined, etc.) is treated as
+  // private and requires the x-toolrelay-key header.
+  //
+  // Failing closed here is intentional: leaking is far more costly than
+  // bouncing a misconfigured row.
+  // ===========================================================================
+  const isPublic = tool.is_public === true;
 
-  if (isPrivate) {
-    const presented = (request.headers.get(API_KEY_HEADER) ?? '').trim();
-    if (!presented) {
+  if (!isPublic) {
+    console.log('[run] private guard entered', {
+      slug: tool.slug,
+      is_public: tool.is_public,
+      is_public_type: typeof tool.is_public,
+    });
+
+    const providedKey = (request.headers.get(API_KEY_HEADER) ?? '').trim();
+
+    if (!providedKey) {
       await logRun(admin, tool.id, tool.user_id, 401, 0, 'unauthorized_missing_key');
-      return errorJson(401, {
-        error: 'unauthorized_missing_key',
-        message: `Missing required ${API_KEY_HEADER} header for this private tool`,
-      });
+      return NextResponse.json(
+        {
+          error: 'unauthorized_missing_key',
+          message: 'Private tool requires x-toolrelay-key.',
+        },
+        { status: 401 }
+      );
     }
 
-    const presentedHash = hashApiKey(presented);
+    const presentedHash = hashApiKey(providedKey);
 
     const { data: keyRow, error: keyErr } = await admin
       .from('tool_api_keys')
@@ -138,27 +140,44 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
     }
 
     if (!keyRow) {
-      // Tool is private but has no key row — owner needs to generate one.
-      // Return 401 with a distinct code so the caller can tell this apart
-      // from a wrong-key attempt.
       await logRun(admin, tool.id, tool.user_id, 401, 0, 'api_key_not_configured');
-      return errorJson(401, {
-        error: 'api_key_not_configured',
-        message:
-          'This private tool has no API key configured. The owner must generate one in the dashboard.',
-      });
+      return NextResponse.json(
+        {
+          error: 'api_key_not_configured',
+          message:
+            'This private tool has no API key configured. The owner must generate one in the dashboard.',
+        },
+        { status: 401 }
+      );
     }
 
     if (keyRow.key_hash !== presentedHash) {
       await logRun(admin, tool.id, tool.user_id, 401, 0, 'unauthorized_invalid_key');
-      return errorJson(401, {
-        error: 'unauthorized_invalid_key',
-        message: 'Invalid API key for this tool',
-      });
+      return NextResponse.json(
+        {
+          error: 'unauthorized_invalid_key',
+          message: 'Invalid API key for this tool.',
+        },
+        { status: 401 }
+      );
     }
+
+    console.log('[run] private guard passed', { slug: tool.slug });
   }
 
-  // 5. Plan/usage gate. If the usage lookup itself fails, log and continue —
+  // 3. Validate the configured endpoint (SSRF guard, http(s) only).
+  const urlCheck = validateEndpointUrl(tool.endpoint_url);
+  if (!urlCheck.ok) {
+    return errorJson(500, {
+      error: 'invalid_endpoint',
+      message: 'The configured endpoint URL is not allowed',
+      details: urlCheck.error,
+    });
+  }
+  const upstreamUrl = urlCheck.url;
+  const upstreamHost = upstreamUrl.host;
+
+  // 4. Plan/usage gate. If the usage lookup itself fails, log and continue —
   // never block legitimate runs because the metering query had a hiccup.
   try {
     const usage = await getUserUsageContext(tool.user_id);
@@ -203,7 +222,17 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
     }
   }
 
-  // 6. Call upstream with a timeout. Capture the rich `error.cause` that Node
+  // 6. Last log before any upstream side effect. If a private tool's request
+  // somehow reaches this line without a valid key, the auth gate has been
+  // bypassed and a regression has shipped.
+  console.log('[run] before upstream fetch', {
+    slug,
+    is_public: tool.is_public,
+    method,
+    upstreamHost,
+  });
+
+  // 7. Call upstream with a timeout. Capture the rich `error.cause` that Node
   // 18+ fetch attaches for DNS / TLS / network failures.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -245,7 +274,7 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
 
   const latencyMs = Date.now() - start;
 
-  // 7. Always log usage, even on failure.
+  // 8. Always log usage, even on failure.
   await logRun(
     admin,
     tool.id,
@@ -271,7 +300,7 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
     });
   }
 
-  // 8. Forward upstream response. Prefer JSON when possible.
+  // 9. Forward upstream response. Prefer JSON when possible.
   if (upstreamContentType.includes('application/json')) {
     try {
       const parsed = JSON.parse(upstreamBody);

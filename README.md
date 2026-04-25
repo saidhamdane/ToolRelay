@@ -210,6 +210,64 @@ curl -i -X POST "$NEXT_PUBLIC_APP_URL/api/run/<slug>" \
 Expected: `HTTP/2 200`, JSON response from httpbin echoing the body, and a
 new row in `usage_logs` for that tool.
 
+### Verifying the private-tool auth guard
+
+After every deploy that touches `/api/run/[slug]`, walk through this checklist:
+
+1. In the dashboard, create a tool (or open an existing one) and toggle it
+   to **Private**. Confirm the tool detail page shows an amber warning if no
+   key has been generated, then click **Generate API key** and copy the value.
+   Confirm in Supabase that `tools.is_public` is the literal boolean `false`
+   for that slug.
+
+2. Hit the proxy **without** the header — must be 401:
+
+   ```bash
+   curl -i -X POST "$NEXT_PUBLIC_APP_URL/api/run/<slug>" \
+     -H 'Content-Type: application/json' \
+     -d '{"message":"test without key"}'
+   # expected: HTTP/2 401
+   # body: {"error":"unauthorized_missing_key", ...}
+   ```
+
+3. Hit it **with a wrong key** — must be 401, distinct code:
+
+   ```bash
+   curl -i -X POST "$NEXT_PUBLIC_APP_URL/api/run/<slug>" \
+     -H 'Content-Type: application/json' \
+     -H 'x-toolrelay-key: trk_definitely_not_real' \
+     -d '{"message":"test wrong key"}'
+   # expected: HTTP/2 401
+   # body: {"error":"unauthorized_invalid_key", ...}
+   ```
+
+4. Hit it **with the real key** — must be 200 and proxied:
+
+   ```bash
+   curl -i -X POST "$NEXT_PUBLIC_APP_URL/api/run/<slug>" \
+     -H 'Content-Type: application/json' \
+     -H "x-toolrelay-key: $REAL_KEY" \
+     -d '{"message":"hello"}'
+   # expected: HTTP/2 200, httpbin's JSON echo
+   ```
+
+5. **Cross-check Vercel logs.** A successful private call must show, in order:
+
+   ```
+   [run] handler entered { slug: '<slug>', method: 'POST' }
+   [run] private guard entered { slug: '<slug>', is_public: false, ... }
+   [run] private guard passed { slug: '<slug>' }
+   [run] before upstream fetch { slug: '<slug>', is_public: false, ... }
+   ```
+
+   If you see `[run] before upstream fetch` for a private tool *without* the
+   `[run] private guard passed` line above it, the guard has been bypassed —
+   open an issue. If you see no `[run] handler entered` line at all, Vercel
+   is serving stale function output: redeploy with the cache cleared.
+
+6. Confirm `usage_logs` has rows for steps 2, 3 and 4 with `status_code` 401,
+   401, 200 respectively. Step 4 should also have a non-null `latency_ms`.
+
 ### Common fixes
 
 - **All proxy calls 500 with no body** → `SUPABASE_SERVICE_ROLE_KEY` is not set
