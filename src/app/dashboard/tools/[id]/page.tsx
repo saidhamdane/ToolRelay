@@ -134,11 +134,16 @@ export default async function ToolDetailPage({ params }: { params: { id: string 
               previous key stops working immediately.
             </p>
           </div>
-        ) : (
+        ) : tool.is_public ? (
           <p className="text-sm text-slate-600">
-            No API key on file yet. Generate one — required for private tools, optional but
-            recommended for public tools.
+            No API key on file yet. Generating one is optional for public tools.
           </p>
+        ) : (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <strong>This private tool has no API key configured.</strong> Calls to{' '}
+            <code className="font-mono">/api/run/{tool.slug}</code> will return{' '}
+            <code className="font-mono">401 api_key_not_configured</code> until you generate one.
+          </div>
         )}
         <RegenerateKeyButton toolId={tool.id} hasKey={!!keyRow} />
       </section>

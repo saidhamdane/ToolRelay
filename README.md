@@ -187,7 +187,9 @@ Possible `error` codes and what they mean:
 | `tool_lookup_failed` | 500 | DB lookup failed (RLS / network / migrations not applied) | Check Supabase status; re-run `supabase/migrations/0001_init.sql` |
 | `tool_not_found` | 404 | No `tools` row matches the slug | Verify the slug in the dashboard |
 | `invalid_endpoint` | 500 | Saved `endpoint_url` was rejected by the SSRF guard (localhost, private IP, non-http(s)) | Edit the tool to use a public https URL |
-| `unauthorized` | 401 | Private tool was called without an `x-toolrelay-key` header, or with one that doesn't match | Send the current key; regenerate from the tool detail page if lost |
+| `unauthorized_missing_key` | 401 | Private tool was called without an `x-toolrelay-key` header | Send the header on every request |
+| `unauthorized_invalid_key` | 401 | Header present but the value doesn't match the tool's stored hash | Send the current key; regenerate from the tool detail page if lost |
+| `api_key_not_configured` | 401 | Tool is marked private but has no row in `tool_api_keys` | Open the tool detail page and click **Generate API key** |
 | `auth_lookup_failed` | 500 | Could not query `tool_api_keys` (RLS / missing migration) | Apply `0002_tool_api_keys.sql` and check service-role permissions |
 | `plan_limit_exceeded` | 429 | Owner is past their monthly run cap | Upgrade plan or wait for the reset |
 | `upstream_fetch_failed` | 502 | Network / DNS / TLS error or non-HTTP response from upstream | See `details` for the underlying code (`ENOTFOUND`, `ECONNRESET`, `CERT_HAS_EXPIRED`, …) |

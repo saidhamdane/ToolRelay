@@ -99,12 +99,23 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
   // 4. Private tools: require a matching x-toolrelay-key header. Public tools
   // are open. Failed auth is logged to usage_logs as a 401 so owners can see
   // unauthorized attempts in the dashboard.
-  if (!tool.is_public) {
-    const presented = request.headers.get(API_KEY_HEADER) ?? '';
+  //
+  // Defensive: treat ANY value other than the literal boolean `true` as
+  // private. Better to reject a misconfigured tool than to leak one.
+  const isPrivate = tool.is_public !== true;
+  console.log('[run] auth gate', {
+    slug: tool.slug,
+    is_public: tool.is_public,
+    is_public_type: typeof tool.is_public,
+    isPrivate,
+  });
+
+  if (isPrivate) {
+    const presented = (request.headers.get(API_KEY_HEADER) ?? '').trim();
     if (!presented) {
       await logRun(admin, tool.id, tool.user_id, 401, 0, 'unauthorized_missing_key');
       return errorJson(401, {
-        error: 'unauthorized',
+        error: 'unauthorized_missing_key',
         message: `Missing required ${API_KEY_HEADER} header for this private tool`,
       });
     }
@@ -113,9 +124,8 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
 
     const { data: keyRow, error: keyErr } = await admin
       .from('tool_api_keys')
-      .select('tool_id')
+      .select('tool_id, key_hash')
       .eq('tool_id', tool.id)
-      .eq('key_hash', presentedHash)
       .maybeSingle();
 
     if (keyErr) {
@@ -128,9 +138,21 @@ async function handle(request: NextRequest, slug: string): Promise<NextResponse>
     }
 
     if (!keyRow) {
+      // Tool is private but has no key row — owner needs to generate one.
+      // Return 401 with a distinct code so the caller can tell this apart
+      // from a wrong-key attempt.
+      await logRun(admin, tool.id, tool.user_id, 401, 0, 'api_key_not_configured');
+      return errorJson(401, {
+        error: 'api_key_not_configured',
+        message:
+          'This private tool has no API key configured. The owner must generate one in the dashboard.',
+      });
+    }
+
+    if (keyRow.key_hash !== presentedHash) {
       await logRun(admin, tool.id, tool.user_id, 401, 0, 'unauthorized_invalid_key');
       return errorJson(401, {
-        error: 'unauthorized',
+        error: 'unauthorized_invalid_key',
         message: 'Invalid API key for this tool',
       });
     }
