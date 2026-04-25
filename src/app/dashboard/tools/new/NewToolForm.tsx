@@ -15,6 +15,9 @@ interface CreatedToolReveal {
 }
 
 export function NewToolForm({ plan }: { plan: PlanLimits }) {
+  const allowsPrivate = plan.allowsPrivateTools;
+  const allowsCustomHeaders = plan.allowsCustomAuthHeaders;
+
   const [form, setForm] = useState({
     name: '',
     slug: '',
@@ -39,6 +42,19 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+
+    // Client-side gate — server enforces too, but no point round-tripping
+    // when the plan obviously can't do this.
+    if (!form.is_public && !allowsPrivate) {
+      setError('Private tools require the Pro plan.');
+      setLoading(false);
+      return;
+    }
+    if ((form.auth_header_name || form.auth_header_value) && !allowsCustomHeaders) {
+      setError('Custom auth headers require the Pro plan.');
+      setLoading(false);
+      return;
+    }
 
     let inputSchemaParsed: unknown = null;
     let outputExampleParsed: unknown = null;
@@ -67,11 +83,11 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
       description: form.description || null,
       endpoint_url: form.endpoint_url,
       method: form.method,
-      auth_header_name: form.auth_header_name || null,
-      auth_header_value: form.auth_header_value || null,
+      auth_header_name: allowsCustomHeaders ? form.auth_header_name || null : null,
+      auth_header_value: allowsCustomHeaders ? form.auth_header_value || null : null,
       input_schema: inputSchemaParsed,
       output_example: outputExampleParsed,
-      is_public: form.is_public,
+      is_public: allowsPrivate ? form.is_public : true,
     };
 
     const res = await fetch('/api/tools', {
@@ -115,7 +131,7 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
           </div>
         ) : null}
 
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <Link href={`/dashboard/tools/${created.toolId}`} className="btn-primary">
             Continue to tool
           </Link>
@@ -126,9 +142,6 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
       </div>
     );
   }
-
-  const customHeaderDisabled = !plan.allowsCustomAuthHeaders;
-  const privateDisabled = !plan.allowsPrivateTools;
 
   return (
     <form onSubmit={submit} className="mt-8 card p-6 space-y-5">
@@ -189,37 +202,78 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
         </Field>
       </div>
 
-      <fieldset
-        className={`rounded-lg border p-4 ${customHeaderDisabled ? 'border-slate-200 bg-slate-50' : 'border-slate-200'}`}
-      >
-        <legend className="px-1 text-sm font-medium">
-          Auth header{' '}
-          {customHeaderDisabled && (
-            <span className="text-xs text-slate-500 font-normal">
-              (Pro plan required)
-            </span>
-          )}
+      <fieldset className="rounded-lg border border-slate-200 p-4">
+        <legend className="px-1 text-sm font-medium flex items-center gap-2">
+          Visibility
+          {!allowsPrivate && <ProRequiredPill />}
         </legend>
-        <div className="grid gap-4 sm:grid-cols-2 mt-2">
+        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+          <VisibilityRadio
+            label="Public"
+            description="Anyone with the slug can call the proxy. Listed at /tool/<slug>."
+            checked={form.is_public}
+            onChange={() => update('is_public', true)}
+          />
+          <VisibilityRadio
+            label="Private"
+            description={
+              allowsPrivate
+                ? 'Requires x-toolrelay-key on every call. Not listed publicly.'
+                : 'Requires Pro. Includes per-tool API keys.'
+            }
+            checked={!form.is_public}
+            disabled={!allowsPrivate}
+            onChange={() => allowsPrivate && update('is_public', false)}
+          />
+        </div>
+        {!allowsPrivate && (
+          <p className="help mt-3">
+            Private tools and per-tool API keys are part of Pro.{' '}
+            <Link href="/dashboard/plan" className="text-brand-700 hover:underline">
+              Upgrade to Pro →
+            </Link>
+          </p>
+        )}
+      </fieldset>
+
+      <fieldset className="rounded-lg border border-slate-200 p-4">
+        <legend className="px-1 text-sm font-medium flex items-center gap-2">
+          Auth header
+          <span className="text-xs text-slate-400 font-normal">Optional</span>
+          {!allowsCustomHeaders && <ProRequiredPill />}
+        </legend>
+        <p className="text-xs text-slate-500 mt-1">
+          ToolRelay forwards this header to your endpoint on every proxy call. Use it to attach the
+          owner-side API key your upstream needs.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 mt-3">
           <Field label="Header name" optional>
             <input
               className="input font-mono"
               placeholder="Authorization"
-              disabled={customHeaderDisabled}
+              disabled={!allowsCustomHeaders}
               value={form.auth_header_name}
               onChange={(e) => update('auth_header_name', e.target.value)}
             />
           </Field>
-          <Field label="Header value" optional hint="Stored encrypted; never shown after save.">
+          <Field label="Header value" optional hint="Stored server-side; never shown after save.">
             <input
               className="input font-mono"
               placeholder="Bearer sk-live-…"
-              disabled={customHeaderDisabled}
+              disabled={!allowsCustomHeaders}
               value={form.auth_header_value}
               onChange={(e) => update('auth_header_value', e.target.value)}
             />
           </Field>
         </div>
+        {!allowsCustomHeaders && (
+          <p className="help mt-3">
+            Forwarding upstream auth headers is a Pro feature.{' '}
+            <Link href="/dashboard/plan" className="text-brand-700 hover:underline">
+              Upgrade to Pro →
+            </Link>
+          </p>
+        )}
       </fieldset>
 
       <div className="grid gap-5 sm:grid-cols-2">
@@ -243,36 +297,65 @@ export function NewToolForm({ plan }: { plan: PlanLimits }) {
         </Field>
       </div>
 
-      <div>
-        <label className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            checked={form.is_public}
-            disabled={privateDisabled && !form.is_public}
-            onChange={(e) => {
-              if (!plan.allowsPrivateTools && !e.target.checked) return;
-              update('is_public', e.target.checked);
-            }}
-          />
-          <span className="text-sm">
-            Public tool — visible at <code className="font-mono">/tool/{form.slug || 'your-slug'}</code>
-          </span>
-        </label>
-        {privateDisabled && (
-          <p className="help">Private tools require Pro. Public tools are visible to anyone with the slug.</p>
-        )}
-      </div>
-
       {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{error}</p>
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
+          {error}
+        </p>
       )}
 
-      <div className="flex gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
         <button type="submit" disabled={loading} className="btn-primary">
           {loading ? 'Creating…' : 'Create tool'}
         </button>
+        <Link href="/dashboard" className="btn-ghost">
+          Cancel
+        </Link>
       </div>
     </form>
+  );
+}
+
+function ProRequiredPill() {
+  return (
+    <span className="badge bg-brand-100 text-brand-700 font-normal">Pro required</span>
+  );
+}
+
+function VisibilityRadio({
+  label,
+  description,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <label
+      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${
+        disabled
+          ? 'border-slate-200 bg-slate-50 cursor-not-allowed opacity-70'
+          : checked
+          ? 'border-brand-600 bg-brand-50/50'
+          : 'border-slate-200 hover:border-slate-300'
+      }`}
+    >
+      <input
+        type="radio"
+        className="mt-1"
+        checked={checked}
+        disabled={disabled}
+        onChange={onChange}
+      />
+      <div>
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-xs text-slate-600 mt-0.5">{description}</div>
+      </div>
+    </label>
   );
 }
 

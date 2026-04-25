@@ -20,15 +20,17 @@ export default async function DashboardOverview() {
 
   const toolList = tools ?? [];
   const planLabel = usage.plan.name;
+  const isFree = usage.plan.id === 'free';
   const atToolLimit = usage.toolCount >= usage.plan.maxTools;
   const runsPct = Math.min(100, Math.round((usage.monthlyRuns / usage.plan.maxRunsPerMonth) * 100));
+  const atRunLimit = usage.monthlyRuns >= usage.plan.maxRunsPerMonth;
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-slate-600">Signed in as {user.email}</p>
+          <p className="text-sm text-slate-600 break-all">Signed in as {user.email}</p>
         </div>
         <Link
           href="/dashboard/tools/new"
@@ -39,9 +41,37 @@ export default async function DashboardOverview() {
         </Link>
       </div>
 
+      {isFree && (
+        <div className="rounded-xl border border-brand-200 bg-gradient-to-r from-brand-50 to-indigo-50 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold text-brand-900">You're on the Free plan</div>
+            <p className="mt-1 text-sm text-slate-700">
+              Upgrade to Pro for 10 tools, 10,000 runs/month, private tools with API keys, and
+              custom auth headers.
+            </p>
+          </div>
+          <Link href="/dashboard/plan" className="btn-primary whitespace-nowrap">
+            Upgrade to Pro
+          </Link>
+        </div>
+      )}
+
+      {atRunLimit && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <strong>Monthly run limit reached.</strong> Calls to your proxy URLs will return{' '}
+          <code className="font-mono">429 plan_limit_exceeded</code> until usage resets on the
+          first of next month UTC.{' '}
+          {isFree && (
+            <Link href="/dashboard/plan" className="underline">
+              Upgrade to Pro
+            </Link>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard title="Plan" value={planLabel}>
-          <Link href="/pricing" className="text-xs text-brand-700 hover:underline">
+          <Link href="/dashboard/plan" className="text-xs text-brand-700 hover:underline">
             {usage.plan.id === 'pro' ? 'Manage plan' : 'Upgrade to Pro'}
           </Link>
         </StatCard>

@@ -2,14 +2,32 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getStripe } from '@/lib/stripe';
+import { getAppBaseUrl } from '@/lib/app-url';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 export async function POST() {
-  const priceId = process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const priceId = process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO?.trim();
+  const stripeKey = process.env.STRIPE_SECRET_KEY?.trim();
+
+  if (!stripeKey) {
+    return NextResponse.json(
+      {
+        error: 'stripe_not_configured',
+        message: 'STRIPE_SECRET_KEY is not set on the server.',
+      },
+      { status: 500 }
+    );
+  }
   if (!priceId) {
-    return NextResponse.json({ error: 'Stripe price not configured' }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: 'stripe_price_not_configured',
+        message: 'NEXT_PUBLIC_STRIPE_PRICE_PRO is not set on the server.',
+      },
+      { status: 500 }
+    );
   }
 
   const supabase = createClient();
@@ -17,13 +35,38 @@ export async function POST() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user || !user.email) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json(
+      { error: 'unauthorized', message: 'Sign in before starting checkout.' },
+      { status: 401 }
+    );
   }
 
-  const stripe = getStripe();
-  const admin = createAdminClient();
+  let stripe: ReturnType<typeof getStripe>;
+  try {
+    stripe = getStripe();
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: 'stripe_init_failed', message: e?.message ?? 'Could not init Stripe' },
+      { status: 500 }
+    );
+  }
 
-  // Reuse existing customer if we already have one for this user.
+  let admin: ReturnType<typeof createAdminClient>;
+  try {
+    admin = createAdminClient();
+  } catch (e: any) {
+    return NextResponse.json(
+      {
+        error: 'server_misconfigured',
+        message: e?.message ?? 'Supabase admin client unavailable',
+      },
+      { status: 500 }
+    );
+  }
+
+  const appUrl = getAppBaseUrl();
+
+  // Reuse existing Stripe customer if we already have one for this user.
   const { data: existing } = await admin
     .from('subscriptions')
     .select('stripe_customer_id')
@@ -48,17 +91,27 @@ export async function POST() {
     );
   }
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${appUrl}/dashboard?upgraded=1`,
-    cancel_url: `${appUrl}/pricing?canceled=1`,
-    allow_promotion_codes: true,
-    client_reference_id: user.id,
-    metadata: { supabase_user_id: user.id },
-    subscription_data: { metadata: { supabase_user_id: user.id } },
-  });
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${appUrl}/dashboard/plan?upgraded=1`,
+      cancel_url: `${appUrl}/dashboard/plan?canceled=1`,
+      allow_promotion_codes: true,
+      client_reference_id: user.id,
+      metadata: { supabase_user_id: user.id },
+      subscription_data: { metadata: { supabase_user_id: user.id } },
+    });
 
-  return NextResponse.json({ url: session.url });
+    return NextResponse.json({ url: session.url });
+  } catch (e: any) {
+    return NextResponse.json(
+      {
+        error: 'checkout_failed',
+        message: e?.message ?? 'Stripe rejected the checkout request',
+      },
+      { status: 500 }
+    );
+  }
 }

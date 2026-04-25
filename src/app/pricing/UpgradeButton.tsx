@@ -7,7 +7,7 @@ export function UpgradeButton() {
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <div className="mt-8">
+    <div className="w-full">
       <button
         type="button"
         disabled={loading}
@@ -15,14 +15,19 @@ export function UpgradeButton() {
         onClick={async () => {
           setLoading(true);
           setError(null);
-          const res = await fetch('/api/stripe/checkout', { method: 'POST' });
-          const data = await res.json();
-          if (!res.ok || !data.url) {
-            setError(data.error || 'Could not start checkout');
+          try {
+            const res = await fetch('/api/stripe/checkout', { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.url) {
+              setError(data.message || data.error || 'Could not start checkout');
+              setLoading(false);
+              return;
+            }
+            window.location.href = data.url;
+          } catch (e: any) {
+            setError(e?.message ?? 'Network error starting checkout');
             setLoading(false);
-            return;
           }
-          window.location.href = data.url;
         }}
       >
         {loading ? 'Starting checkout…' : 'Upgrade to Pro'}

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getAppBaseUrl } from '@/lib/app-url';
 import { SiteHeader } from '@/components/SiteHeader';
 import { SiteFooter } from '@/components/SiteFooter';
 import { CopyButton } from '@/components/CopyButton';
@@ -21,7 +22,7 @@ export default async function PublicToolPage({ params }: { params: { slug: strin
 
   if (!tool) notFound();
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const appUrl = getAppBaseUrl();
   const proxyUrl = `${appUrl}/api/run/${tool.slug}`;
 
   const exampleBody = tool.input_schema

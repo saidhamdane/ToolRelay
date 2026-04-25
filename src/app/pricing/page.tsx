@@ -80,7 +80,9 @@ export default async function PricingPage() {
                       You're on Pro
                     </button>
                   ) : (
-                    <UpgradeButton />
+                    <div className="mt-8">
+                      <UpgradeButton />
+                    </div>
                   )
                 ) : (
                   <Link href="/signup?upgrade=pro" className="btn-primary mt-8 w-full">

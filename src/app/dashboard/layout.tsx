@@ -15,11 +15,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <>
       <SiteHeader />
       <div className="mx-auto max-w-6xl px-4 py-8">
-        <nav className="mb-6 flex gap-1 text-sm border-b border-slate-200">
+        <nav className="mb-6 flex gap-1 text-sm border-b border-slate-200 overflow-x-auto">
           <DashTab href="/dashboard" label="Overview" />
           <DashTab href="/dashboard/usage" label="Usage" />
           <DashTab href="/dashboard/tools/new" label="New tool" />
-          <DashTab href="/pricing" label="Plan" />
+          <DashTab href="/dashboard/plan" label="Plan" />
         </nav>
         {children}
       </div>

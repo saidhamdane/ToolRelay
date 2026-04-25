@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { getAppBaseUrl } from '@/lib/app-url';
 import { CopyButton } from '@/components/CopyButton';
 import { DeleteToolButton } from './DeleteToolButton';
 import { RegenerateKeyButton } from './RegenerateKeyButton';
@@ -36,7 +37,7 @@ export default async function ToolDetailPage({ params }: { params: { id: string 
     .eq('tool_id', tool.id)
     .maybeSingle();
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const appUrl = getAppBaseUrl();
   const proxyUrl = `${appUrl}/api/run/${tool.slug}`;
   const publicUrl = `${appUrl}/tool/${tool.slug}`;
 

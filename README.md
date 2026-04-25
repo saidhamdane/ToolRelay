@@ -3,7 +3,26 @@
 Turn any API into an AI-agent-ready paid tool — in minutes.
 
 ToolRelay wraps an API endpoint in a public tool page, a proxy URL agents can
-call, usage tracking, and Stripe-billed subscription limits.
+call, usage tracking, per-tool API keys, and Stripe-billed subscription limits.
+A SaaS owner connects their endpoint, picks Public or Private, and ships a
+metered, billable tool that AI agents and developers can call.
+
+## Plan comparison
+
+| Capability | Free | Pro ($19 / mo) |
+| --- | --- | --- |
+| Tools | 1 | 10 |
+| Runs per month (UTC reset) | 100 | 10,000 |
+| Public tool pages | ✓ | ✓ |
+| Private tools | — | ✓ |
+| Per-tool API keys (`x-toolrelay-key`) | — | ✓ |
+| Custom auth header forwarded upstream | — | ✓ |
+| Usage logs | ✓ | ✓ |
+| Stripe billing | — | ✓ |
+
+Limits are enforced server-side at create time (HTTP 402) and on every proxy
+call (HTTP 429 `plan_limit_exceeded`). The monthly run window resets on the
+first of each month UTC.
 
 ## Stack
 
@@ -282,6 +301,94 @@ After every deploy that touches `/api/run/[slug]`, walk through this checklist:
 
 The proxy's `upstream_host` field intentionally returns only the host (no
 path) and `auth_header_value` is never logged or echoed back to clients.
+
+## Launch smoke tests
+
+Run these end-to-end against a deployed environment to confirm the paid MVP
+works. Set the env vars first:
+
+```bash
+export APP=https://tool-relay.vercel.app          # or your custom domain
+export PUBLIC_SLUG=httpbin-public-test            # the slug of a public tool
+export PRIVATE_SLUG=httpbin-private-test          # the slug of a private tool
+export KEY=trk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # the plaintext key revealed once
+```
+
+**a) Create a public tool.** Sign in as a Free user → `/dashboard/tools/new`.
+Set Visibility = Public, endpoint `https://httpbin.org/post`, method POST.
+Submit. The success screen reveals an API key — Public tools don't enforce
+it, but it's available if you flip the tool private later.
+
+**b) Call the public proxy** (no key needed):
+
+```bash
+curl -i -X POST "$APP/api/run/$PUBLIC_SLUG" \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"hello from ToolRelay"}'
+# expected: HTTP/2 200, JSON body echoed by httpbin
+```
+
+**c) Create a private tool.** Upgrade to Pro first
+(`/dashboard/plan` → Upgrade). Then create a tool with Visibility =
+Private, endpoint `https://httpbin.org/post`. Copy the revealed
+`trk_…` key into `$KEY`.
+
+**d) Call the private proxy without the key — must fail:**
+
+```bash
+curl -i -X POST "$APP/api/run/$PRIVATE_SLUG" \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"no key"}'
+# expected: HTTP/2 401
+# body: {"error":"unauthorized_missing_key", ...}
+```
+
+**e) Call the private proxy with the key — must succeed:**
+
+```bash
+curl -i -X POST "$APP/api/run/$PRIVATE_SLUG" \
+  -H 'Content-Type: application/json' \
+  -H "x-toolrelay-key: $KEY" \
+  -d '{"message":"with key"}'
+# expected: HTTP/2 200, JSON body echoed by httpbin
+```
+
+**f) Exceed the Free plan tool limit.** As a Free user with one tool, hit
+`/dashboard/tools/new` and submit a second tool:
+
+```bash
+# In the dashboard the New tool button is disabled at the limit. Direct
+# API call should still be rejected:
+curl -i -X POST "$APP/api/tools" \
+  -H 'Content-Type: application/json' \
+  --cookie "$AUTH_COOKIE" \
+  -d '{"name":"second","slug":"second","endpoint_url":"https://httpbin.org/post","method":"POST","is_public":true}'
+# expected: HTTP/2 402, body mentions "Plan limit reached: max 1 tools on Free"
+```
+
+**g) Start Stripe checkout.** From `/dashboard/plan`, click **Upgrade to Pro**.
+Should redirect to a Stripe Checkout session for the Pro price. After
+completing payment, the webhook flips `subscriptions.plan` to `pro` and the
+dashboard reflects the new limits.
+
+To verify the webhook locally:
+
+```bash
+stripe listen --forward-to http://localhost:3000/api/stripe/webhook
+stripe trigger checkout.session.completed
+```
+
+After each test, confirm rows in `usage_logs`:
+
+```sql
+select status_code, error_message, created_at
+from usage_logs
+order by created_at desc
+limit 20;
+```
+
+You should see status_code=200 for the successful proxy calls and
+status_code=401 with `unauthorized_missing_key` for the failing private call.
 
 ## Deploy
 
