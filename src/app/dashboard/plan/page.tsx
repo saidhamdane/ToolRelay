@@ -60,13 +60,24 @@ export default async function DashboardPlanPage({
                 <span className="text-slate-500">/mo</span>
               </div>
               <ul className="mt-6 space-y-2 text-sm text-slate-700">
-                <li>• Up to {t.maxTools} {t.maxTools === 1 ? 'tool' : 'tools'}</li>
-                <li>• {t.maxRunsPerMonth.toLocaleString()} runs per month</li>
-                <li>• {t.allowsPrivateTools ? 'Private tools allowed' : 'Public tools only'}</li>
-                <li>• {t.allowsCustomAuthHeaders ? 'Custom auth headers' : 'No custom auth headers'}</li>
-                <li>• {t.id === 'pro' ? 'Per-tool API keys with regenerate' : 'Shared public proxy URL'}</li>
-                <li>• Usage logs and dashboard</li>
-                <li>• {t.id === 'pro' ? 'Priority email support' : 'Best-effort email support'}</li>
+                {t.id === 'free' ? (
+                  <>
+                    <li>• 1 public MCP-ready tool</li>
+                    <li>• 100 runs / month</li>
+                    <li>• MCP endpoint + raw HTTP proxy</li>
+                    <li>• Public tool page</li>
+                    <li>• Basic usage logs</li>
+                  </>
+                ) : (
+                  <>
+                    <li>• 10 MCP-ready tools</li>
+                    <li>• Private MCP tools with per-tool API keys</li>
+                    <li>• 10,000 runs / month</li>
+                    <li>• Custom upstream auth headers</li>
+                    <li>• Full usage logs</li>
+                    <li>• Stripe subscription billing</li>
+                  </>
+                )}
               </ul>
 
               <div className="mt-8">

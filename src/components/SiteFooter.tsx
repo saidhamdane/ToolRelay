@@ -5,7 +5,10 @@ export function SiteFooter() {
     <footer className="border-t border-slate-200 mt-16">
       <div className="mx-auto max-w-6xl px-4 py-8 flex flex-col sm:flex-row gap-4 sm:items-center sm:justify-between text-sm text-slate-600">
         <div>© {new Date().getFullYear()} ToolRelay</div>
-        <div className="flex gap-4">
+        <div className="flex gap-4 flex-wrap">
+          <Link href="/mcp" className="hover:text-slate-900">
+            MCP
+          </Link>
           <Link href="/pricing" className="hover:text-slate-900">
             Pricing
           </Link>

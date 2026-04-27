@@ -18,6 +18,9 @@ export async function SiteHeader() {
           <span className="font-semibold tracking-tight">ToolRelay</span>
         </Link>
         <nav className="flex items-center gap-1 text-sm">
+          <Link href="/mcp" className="btn-ghost hidden sm:inline-flex">
+            MCP
+          </Link>
           <Link href="/pricing" className="btn-ghost">
             Pricing
           </Link>

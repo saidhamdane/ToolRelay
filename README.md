@@ -94,13 +94,15 @@ stripe listen --forward-to http://localhost:3000/api/stripe/webhook
 
 ### Pages
 
-- `/` — landing page (hero, steps, use cases, pricing, FAQ, CTA)
+- `/` — landing page (MCP-first hero, steps, value grid, pricing, FAQ, CTA)
+- `/mcp` — MCP integration guide (endpoint format, public/private examples, security)
 - `/login`, `/signup` — Supabase auth (email/password)
 - `/dashboard` — overview with plan, tool count, monthly runs, tools list
 - `/dashboard/tools/new` — create a tool
-- `/dashboard/tools/[id]` — tool detail, proxy URL, cURL, recent runs, delete
+- `/dashboard/tools/[id]` — tool detail, MCP endpoint, proxy URL, cURL, recent runs, delete
+- `/dashboard/plan` — in-dashboard plan & billing
 - `/dashboard/usage` — last 100 runs across all tools
-- `/pricing` — Free vs Pro, upgrade button
+- `/pricing` — public Free vs Pro, upgrade button
 - `/tool/[slug]` — public tool page with proxy URL & cURL example
 - `/terms`, `/privacy` — legal
 
@@ -117,6 +119,57 @@ stripe listen --forward-to http://localhost:3000/api/stripe/webhook
 - `POST /api/stripe/checkout` — start a Pro upgrade Checkout session
 - `POST /api/stripe/webhook` — Stripe webhook (subscription state sync)
 - `GET /api/auth/callback` — email-confirm / OAuth callback
+
+## ToolRelay MCP Mode
+
+**Positioning.** ToolRelay turns any API into an MCP server for AI agents.
+Every tool you create exposes an MCP-ready JSON endpoint alongside the raw
+HTTP proxy, so AI agents can discover the tool's schema and call it with
+structured arguments.
+
+**Endpoint format.**
+
+```
+GET  /api/mcp/[slug]   ->  tool metadata (name, description, schemas, security)
+POST /api/mcp/[slug]   ->  body { "arguments": { ... } }, returns
+                            { "content": [{ "type": "text", "text": "<upstream JSON>" }],
+                              "upstream_status": <int> }
+```
+
+Auth, plan limits, SSRF guard, 25 s timeout, and `usage_logs` writes are
+shared with `/api/run/[slug]` via the `runTool()` executor in
+`src/lib/run-tool.ts` — the two surfaces cannot drift.
+
+**Public tool example** (no API key):
+
+```bash
+curl -i -X POST "https://www.toolrelay.online/api/mcp/your-public-slug" \
+  -H "Content-Type: application/json" \
+  -d '{"arguments":{"message":"hello"}}'
+```
+
+**Private tool example** (key required):
+
+```bash
+curl -i -X POST "https://www.toolrelay.online/api/mcp/private-pro-test" \
+  -H "Content-Type: application/json" \
+  -H "x-toolrelay-key: trk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  -d '{"arguments":{"message":"hello"}}'
+```
+
+A 401 from a private tool comes back as one of:
+
+- `{"error":"unauthorized_missing_key", ...}` — header absent
+- `{"error":"unauthorized_invalid_key", ...}` — header present, hash mismatch
+- `{"error":"api_key_not_configured", ...}` — tool is private but the owner
+  hasn't generated a key yet
+
+**Known limitation.** This MVP exposes MCP-ready JSON endpoints. Full MCP
+protocol transport support (SSE / stdio / capability negotiation) can be
+added next without changing the public route shape — the `runTool()`
+executor will keep handling auth, plan limits, and logging. Agents that
+can call HTTP JSON endpoints with custom headers can use ToolRelay tools
+today.
 
 ## Per-tool API keys
 

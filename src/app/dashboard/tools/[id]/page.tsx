@@ -39,6 +39,7 @@ export default async function ToolDetailPage({ params }: { params: { id: string 
 
   const appUrl = getAppBaseUrl();
   const proxyUrl = `${appUrl}/api/run/${tool.slug}`;
+  const mcpUrl = `${appUrl}/api/mcp/${tool.slug}`;
   const publicUrl = `${appUrl}/tool/${tool.slug}`;
 
   const exampleBody = JSON.stringify(
@@ -55,6 +56,8 @@ export default async function ToolDetailPage({ params }: { params: { id: string 
     tool.method === 'GET'
       ? `curl '${proxyUrl}'${keyHeaderLine}`
       : `curl -X POST '${proxyUrl}'${keyHeaderLine} \\\n  -H 'content-type: application/json' \\\n  -d '${exampleBody}'`;
+
+  const mcpCurl = `curl -i -X POST '${mcpUrl}'${keyHeaderLine} \\\n  -H 'content-type: application/json' \\\n  -d '{"arguments":${exampleBody}}'`;
 
   return (
     <div className="space-y-8 max-w-4xl">
@@ -100,6 +103,41 @@ export default async function ToolDetailPage({ params }: { params: { id: string 
             </pre>
             <div className="absolute top-2 right-2">
               <CopyButton value={curlExample} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="card p-6 space-y-5">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">MCP integration</h2>
+            <span className="badge bg-brand-100 text-brand-700">MCP-ready</span>
+          </div>
+          <p className="text-sm text-slate-600 mt-1">
+            POST {`{ "arguments": { … } }`} to the MCP endpoint and ToolRelay forwards the
+            arguments to your upstream, returning an MCP-style{' '}
+            <code className="font-mono">{`{ content: [{ type: "text", text }] }`}</code>{' '}
+            wrapper.{' '}
+            {tool.is_public ? (
+              <span>This tool is public — no header required.</span>
+            ) : (
+              <span>
+                Private tool —{' '}
+                <code className="font-mono">x-toolrelay-key</code> required on every call.
+              </span>
+            )}
+          </p>
+        </div>
+        <UrlRow label="MCP endpoint" value={mcpUrl} />
+        <div>
+          <div className="label">cURL example</div>
+          <div className="relative">
+            <pre className="bg-slate-900 text-slate-100 text-xs rounded-lg p-4 overflow-x-auto whitespace-pre">
+              {mcpCurl}
+            </pre>
+            <div className="absolute top-2 right-2">
+              <CopyButton value={mcpCurl} />
             </div>
           </div>
         </div>
